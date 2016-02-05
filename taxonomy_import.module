@@ -1,0 +1,175 @@
+<?php
+
+/**
+ * @file
+ * Module to import a taxonomy vocabulary
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function taxonomy_import_menu() {
+  $items['admin/config/system/taxonomy_import'] = array(
+    'title' => 'Taxonomy Import',
+    'description' => 'Import file into taxonomy',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('taxonomy_import_settings'),
+    'access arguments' => array('administer vocabularies and terms '),
+  );
+
+  return $items;
+}
+
+/**
+ * Build the form for importing
+ */
+function taxonomy_import_settings() {
+  $form['taxonomy_import'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Taxonomy Import'),
+  );
+
+  $form['taxonomy_import']['vocabulary_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name of taxonomy'),
+    '#description' => t('If the role doesn\'t exist, it will be created'),
+    '#default_value' => t('IowaCounties'),
+    '#required' => TRUE,
+  );
+
+  $form['taxonomy_import']['description'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Description'),
+    '#description' => t('Description of this taxonomy, only used when creating a new taxonomy.'),
+  );
+
+  $form['taxonomy_import']['filename'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name of file to import'),
+    '#description' => t('Name of the file that will be imported. The file should contain one taxonomy term per line. Default location is in the files folder for this module.'),
+    '#default_value' => t('IowaCounties.txt'),
+    '#required' => TRUE,
+  );
+
+  $form['taxonomy_import']['handle_dups'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Handle duplicates'),
+    '#description' => t('When checked, terms already in the vocabulary won\'t be duplicated'),
+    '#default_value' => TRUE,
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Import File'),
+  );
+
+  return $form;
+}
+
+/**
+ * Make sure the file exists
+ */
+function taxonomy_import_settings_validate($form, &$form_state) {
+  $path = taxonomy_import_get_file_path(trim($form_state['values']['filename']));
+  if (!file_exists($path)) {
+    form_set_error('filename', t("'%file': file not found", array('%file' => $path)));
+  }
+}
+
+/**
+ * Do the actual importing
+ */
+function taxonomy_import_settings_submit($form, &$form_state) {
+  // Get the fields from the submission form
+  $path = taxonomy_import_get_file_path(trim($form_state['values']['filename']));
+  $description = trim($form_state['values']['description']);
+  $vocabulary_name = trim($form_state['values']['vocabulary_name']);
+  $handle_dups = $form_state['values']['handle_dups'];
+
+  if (($vocabulary = taxonomy_import_get_vocabulary($vocabulary_name)) == NULL) {
+    // Need to create the vocabulary, first thing is get a machine name
+    // See http://buildamodule.com/forum/post/creating-machine-readable-names-from-human-readable
+    $machine_readable = strtolower($vocabulary_name);
+    $machine_readable = preg_replace('@[^a-z0-9_]+@', '_', $machine_readable);
+
+    // Now create the vocabulary
+    $new_vocab = new stdClass();
+    $new_vocab->name = $vocabulary_name;
+    $new_vocab->description = $description;
+    $new_vocab->machine_name = $machine_readable;
+    taxonomy_vocabulary_save($new_vocab);
+    $vocabulary = $new_vocab;
+    drupal_set_message(t('Created Taxonomy vocabulary %name vid %vid', array('%name' => $vocabulary_name, '%vid' => $vocabulary->vid)));
+  }
+
+  // Open the file for reading
+  if ($myfile = fopen($path, "r")) {
+    $count_imported = 0;
+    $count_skipped = 0;
+
+    // Read the file, one line at a time
+    while (!feof($myfile)) {
+      $term = trim(fgets($myfile));
+
+      // Check if we need to add the term
+      $existing_terms = taxonomy_get_term_by_name($term, $vocabulary->machine_name);
+      if ($handle_dups && count($existing_terms) > 0) {
+        $count_skipped++;
+      }
+      else {
+        // Add the term if not empty
+        if (!empty($term)) {
+          $new_term = new stdClass();
+          $new_term->name = $term;
+          $new_term->vid = $vocabulary->vid;
+          taxonomy_term_save($new_term);
+
+          $count_imported++;
+        }
+      }
+    }
+
+    // Close the file, and give some feedback to the user
+    fclose($myfile);
+    if ($handle_dups) {
+      drupal_set_message(t('Imported %count_imported terms into %name, skipped %dups duplicates', array('%count_imported' => $count_imported, '%name' => $vocabulary_name, '%dups' => $count_skipped)));
+    }
+    else {
+      drupal_set_message(t('Imported %count_imported terms into %name', array('%count_imported' => $count_imported, '%name' => $vocabulary_name)));
+    }
+
+  }
+  else {
+    // Couldn't open the file
+    form_set_error('Could not open %file for reading', array('%file' => $path));
+  }
+}
+
+/**
+ *  Get full path to file
+ */
+function taxonomy_import_get_file_path($filename) {
+  $path = $filename;
+
+  if (substr($filename, 0, 1) != '/') {
+    $temp1 = DRUPAL_ROOT;
+    $temp2 = drupal_get_path('module', 'taxonomy_import');
+    $path = "{$temp1}/{$temp2}/files/{$filename}";
+  }
+
+  return $path;
+}
+
+/**
+ * Get the vocabulary by name, NULL if not found
+ */
+function taxonomy_import_get_vocabulary($vocabulary_name) {
+  $vocabularies = taxonomy_vocabulary_get_names();
+  foreach ($vocabularies as $vocabulary) {
+    if ($vocabulary->name == $vocabulary_name) {
+      return $vocabulary;
+    }
+  }
+
+  return NULL;
+}
