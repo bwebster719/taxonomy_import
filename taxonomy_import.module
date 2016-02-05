@@ -33,7 +33,7 @@ function taxonomy_import_settings() {
     '#type' => 'textfield',
     '#title' => t('Name of taxonomy'),
     '#description' => t('If the role doesn\'t exist, it will be created'),
-    '#default_value' => t('IowaCounties'),
+    '#default_value' => t('Iowa Counties'),
     '#required' => TRUE,
   );
 
